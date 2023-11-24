@@ -44,7 +44,7 @@ contract NFTMint is ERC721Enumerable, Ownable {
         ERC721(name, symbol)
         Ownable(msg.sender) {
         paymentReceiver = owner(); // Set the payment receiver to the contract owner
-        paymentToken = IERC20(0x70AE63bA0D88335c3CC89802AeEf253114cea30c); // Initialize with injected token address
+        paymentToken = IERC20(0xa662a27EC0EC79c1c75bf9BC4ff4aA1f1A7a27AF); // Initialize with injected token address
     }
 
     function totalMaxSupply() public view returns (uint256) {
@@ -62,41 +62,6 @@ contract NFTMint is ERC721Enumerable, Ownable {
             }
             return totalRemaining;
         }
-
-
-    function getOwnedNFTs(address owner) public view returns (NFTDetails[] memory) {
-        uint256 tokenCount = balanceOf(owner);
-        NFTDetails[] memory ownedNFTs = new NFTDetails[](tokenCount);
-        for (uint256 i = 0; i < tokenCount; i++) {
-            uint256 tokenId = tokenOfOwnerByIndex(owner, i);
-            uint256 typeId = _tokenTypeIndexes[tokenId];
-            NFTType storage nftType = nftTypes[typeId];
-            ownedNFTs[i] = NFTDetails({
-                name: nftType.name,
-                maxSupply: nftType.maxSupply,
-                remainingSupply: nftType.remainingSupply,
-                price: nftType.price,
-                uri: nftType.uri,
-                tokenId: tokenId
-            });
-        }
-        return ownedNFTs;
-    }
-
-    function getNFTDetails(uint256 tokenId) public view returns (NFTDetails memory) {
-        require(_tokenExists[tokenId], "NFT does not exist."); // Use the custom mapping for existence check
-        uint256 typeId = _tokenTypeIndexes[tokenId];
-        NFTType storage nftType = nftTypes[typeId];
-        return NFTDetails({
-            name: nftType.name,
-            maxSupply: nftType.maxSupply,
-            remainingSupply: nftType.remainingSupply,
-            price: nftType.price,
-            uri: nftType.uri,
-            tokenId: tokenId
-        });
-    }
-
 
      function addNFTType(string memory name, uint256 maxSupply, uint256 price, string memory uri) public onlyOwner {
         require(_nftTypeIndexes[name] == 0, "NFT type name already exists");
@@ -149,19 +114,16 @@ contract NFTMint is ERC721Enumerable, Ownable {
         emit NFTMinted(msg.sender, newTokenId, nftTypeName);
     }
 
-    function getAllNFTTypes() public view returns (NFTType[] memory) {
-        return nftTypes;
+    function getAllNFTTypes() public view returns (string[] memory) {
+    string[] memory nftTypesStrings = new string[](nftTypes.length);
+    for (uint256 i = 0; i < nftTypes.length; i++) {
+        NFTType memory nftType = nftTypes[i];
+        nftTypesStrings[i] = nftTypeToJson(nftType);
     }
-       function getAllNFTTypesAsStrings() public view returns (string[] memory) {
-        string[] memory nftTypesStrings = new string[](nftTypes.length);
-        for (uint256 i = 0; i < nftTypes.length; i++) {
-            NFTType memory nftType = nftTypes[i];
-            nftTypesStrings[i] = nftTypeToJson(nftType);
-        }
-        return nftTypesStrings;
+    return nftTypesStrings;
     }
 
-    function getOwnedNFTsAsStrings(address owner) public view returns (string[] memory) {
+    function getOwnedNFTs(address owner) public view returns (string[] memory) {
         uint256 tokenCount = balanceOf(owner);
         string[] memory ownedNFTsStrings = new string[](tokenCount);
         for (uint256 i = 0; i < tokenCount; i++) {
@@ -172,7 +134,7 @@ contract NFTMint is ERC721Enumerable, Ownable {
         return ownedNFTsStrings;
     }
 
-    function getNFTDetailsAsString(uint256 tokenId) public view returns (string memory) {
+    function getNFTDetails(uint256 tokenId) public view returns (string memory) {
         require(_tokenExists[tokenId], "NFT does not exist.");
         NFTType memory nftType = nftTypes[_tokenTypeIndexes[tokenId]];
         return nftTypeToJson(nftType);
