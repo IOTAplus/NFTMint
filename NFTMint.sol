@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ERC721, ERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-contract NFTMint is ERC721Enumerable, Ownable {
+contract NFTMint is ERC721Enumerable, Ownable, ReentrancyGuard {
     using Strings for uint256;
+    using SafeERC20 for IERC20;
 
     struct NFTType {
         string name;
@@ -17,133 +19,153 @@ contract NFTMint is ERC721Enumerable, Ownable {
         string uri;
     }
 
-    struct NFTDetails {
-        string name;
-        uint256 maxSupply;
-        uint256 remainingSupply;
-        uint256 price;
-        string uri;
-        uint256 tokenId;
-    }
-
-    NFTType[] public nftTypes;
+    mapping(uint256 => NFTType) private nftTypes;
     mapping(string => uint256) private _nftTypeIndexes;
     mapping(uint256 => uint256) private _tokenTypeIndexes;
     mapping(uint256 => bool) private _tokenExists;
+    mapping(string => bool) private _typeExists;
 
+    IERC20 immutable public paymentToken;
+    address immutable public paymentReceiver;
 
-    IERC20 public paymentToken;
-    address public paymentReceiver;
+    uint256 public totalMaxSupply;
+    uint256 public totalNFTTypes; 
+    uint256 public totalRemainingSupply;
+
+    uint256 internal currentTokenId;
 
     event NFTTypeAdded(string name, uint256 maxSupply, uint256 price, string uri);
     event NFTMinted(address minter, uint256 tokenId, string nftTypeName);
     event URIChanged(string nftTypeName, string newUri);
     event PriceChanged(string nftTypeName, uint256 newPrice);
 
-    constructor(string memory name, string memory symbol)
-        ERC721(name, symbol)
-        Ownable(msg.sender) {
-        paymentReceiver = owner(); // Set the payment receiver to the contract owner
-        paymentToken = IERC20(0xa662a27EC0EC79c1c75bf9BC4ff4aA1f1A7a27AF); // Initialize with injected token address
+    modifier exists(string memory nftTypeName) {
+        if (nftTypes[_nftTypeIndexes[nftTypeName]].maxSupply == 0) 
+            revert("NFT type does not exist");
+        _;
     }
 
-    function totalMaxSupply() public view returns (uint256) {
-        uint256 total = 0;
-        for (uint256 i = 0; i < nftTypes.length; i++) {
-            total += nftTypes[i].maxSupply;
-        }
-        return total;
+    constructor(string memory _name, string memory _symbol) 
+        Ownable(msg.sender)
+        ERC721(_name, _symbol
+    ) {
+        paymentReceiver = msg.sender; // Set the payment receiver to the contract owner
+        paymentToken = IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138); // Initialize with injected token address
     }
 
-    function totalNFTsRemaining() public view returns (uint256) {
-            uint256 totalRemaining = 0;
-            for (uint256 i = 0; i < nftTypes.length; i++) {
-                totalRemaining += nftTypes[i].remainingSupply;
-            }
-            return totalRemaining;
-        }
+     function addNFTType(
+        string memory _name, 
+        uint256 maxSupply, 
+        uint256 price, 
+        string memory uri
+    ) external onlyOwner {
+        if (_typeExists[_name]) revert("NFT type name already exists");
+        if (maxSupply == 0) revert("Invalid maxSupply");
 
-     function addNFTType(string memory name, uint256 maxSupply, uint256 price, string memory uri) public onlyOwner {
-        require(_nftTypeIndexes[name] == 0, "NFT type name already exists");
         uint256 priceInWei = price * 10**18; // Convert price to wei
-        nftTypes.push(NFTType({
-            name: name,
-            maxSupply: maxSupply,
-            remainingSupply: maxSupply, // Set remainingSupply to maxSupply at creation
-            price: priceInWei, // Store the price in wei
-            uri: uri
-        }));
-        uint256 typeId = nftTypes.length - 1;
-        _nftTypeIndexes[name] = typeId;
-        emit NFTTypeAdded(name, maxSupply, priceInWei, uri);
+
+        nftTypes[totalNFTTypes] = NFTType(
+            _name,
+            maxSupply,
+            maxSupply, // Set remainingSupply to maxSupply at creation
+            priceInWei, // Store the price in wei
+            uri
+        );
+
+        _nftTypeIndexes[_name] = totalNFTTypes;
+        _typeExists[_name] = true;
+
+        unchecked {
+            totalMaxSupply += maxSupply;
+            totalRemainingSupply += maxSupply;
+            totalNFTTypes++;
+        }
+
+        emit NFTTypeAdded(_name, maxSupply, priceInWei, uri);
+    }
+
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+        if (!_tokenExists[tokenId]) revert("ERC721Metadata: URI query for nonexistent token");
+        uint256 nftTypeId = _tokenTypeIndexes[tokenId];
+        return nftTypes[nftTypeId].uri;
     }
     
-    function setNFTTypeURI(string memory nftTypeName, string memory newUri) public onlyOwner {
-        uint256 typeId = _nftTypeIndexes[nftTypeName];
-        require(typeId != 0 || keccak256(bytes(nftTypes[0].name)) == keccak256(bytes(nftTypeName)), "NFT type does not exist");
-        
-        NFTType storage nftType = nftTypes[typeId];
-        nftType.uri = newUri;
+    function setNFTTypeURI(
+        string memory nftTypeName, 
+        string memory newUri
+    ) external onlyOwner exists(nftTypeName) {
+        nftTypes[_nftTypeIndexes[nftTypeName]].uri = newUri;
         emit URIChanged(nftTypeName, newUri);
     }
 
-    function setNFTTypePrice(string memory nftTypeName, uint256 newPrice) public onlyOwner {
-        uint256 typeId = _nftTypeIndexes[nftTypeName];
-        require(typeId != 0 || keccak256(bytes(nftTypes[0].name)) == keccak256(bytes(nftTypeName)), "NFT type does not exist");
-        
-        NFTType storage nftType = nftTypes[typeId];
+    function setNFTTypePrice(
+        string memory nftTypeName, 
+        uint256 newPrice
+    ) external onlyOwner exists(nftTypeName) {        
         uint256 newPriceInWei = newPrice * 10**18; // Convert new price to wei, if needed
-        nftType.price = newPriceInWei;
+        nftTypes[_nftTypeIndexes[nftTypeName]].price = newPriceInWei;
         emit PriceChanged(nftTypeName, newPriceInWei);
     }
 
-   function mint(string memory nftTypeName) public {
+   function mint(string memory nftTypeName) external nonReentrant exists(nftTypeName) {
         uint256 typeId = _nftTypeIndexes[nftTypeName];
-        require(typeId != 0 || keccak256(bytes(nftTypes[0].name)) == keccak256(bytes(nftTypeName)), "NFT type does not exist");
-        NFTType storage nftType = nftTypes[typeId];
 
-        require(nftType.remainingSupply > 0, "Max supply reached for this NFT type");
-        require(paymentToken.transferFrom(msg.sender, paymentReceiver, nftType.price), "Payment failed");
+        if (nftTypes[typeId].remainingSupply == 0) revert("Max supply reached for this NFT type");
 
-        uint256 newTokenId = totalSupply() + 1; // Use totalSupply() for the new token ID
-        _mint(msg.sender, newTokenId);
-        _tokenTypeIndexes[newTokenId] = typeId;
-        _tokenExists[newTokenId] = true;
-        nftType.remainingSupply--; // Decrease remaining supply
+        paymentToken.safeTransferFrom(msg.sender, paymentReceiver, nftTypes[typeId].price);
 
-        emit NFTMinted(msg.sender, newTokenId, nftTypeName);
+        _mint(msg.sender, currentTokenId);
+
+        _tokenTypeIndexes[currentTokenId] = typeId;
+        _tokenExists[currentTokenId] = true;
+
+        emit NFTMinted(msg.sender, totalMaxSupply, nftTypeName);
+
+        unchecked {
+            nftTypes[typeId].remainingSupply--; // Decrease remaining supply
+            totalRemainingSupply--; // Decrease total remaining supply
+            currentTokenId++;
+        }
     }
 
-    function getAllNFTTypes() public view returns (string[] memory) {
-    string[] memory nftTypesStrings = new string[](nftTypes.length);
-    for (uint256 i = 0; i < nftTypes.length; i++) {
-        NFTType memory nftType = nftTypes[i];
-        nftTypesStrings[i] = nftTypeToJson(nftType);
-    }
-    return nftTypesStrings;
+    // this ouput is a bad idea
+    function getAllNFTTypes() external view returns (string[] memory) {
+        string[] memory nftTypesStrings = new string[](totalNFTTypes);
+
+        unchecked {
+            for (uint256 i; i < totalNFTTypes; i++) {
+                nftTypesStrings[i] = nftTypeToJson(nftTypes[i]);
+            }
+        }
+        return nftTypesStrings;
     }
 
-    function getOwnedNFTs(address owner) public view returns (string[] memory) {
-        uint256 tokenCount = balanceOf(owner);
+    // this ouput is a bad idea
+    function getOwnedNFTs(address _owner) external view returns (string[] memory) {
+        uint256 tokenId;
+        uint256 tokenCount = balanceOf(_owner);
         string[] memory ownedNFTsStrings = new string[](tokenCount);
-        for (uint256 i = 0; i < tokenCount; i++) {
-            uint256 tokenId = tokenOfOwnerByIndex(owner, i);
-            NFTType memory nftType = nftTypes[_tokenTypeIndexes[tokenId]];
-            ownedNFTsStrings[i] = nftTypeToJson(nftType);
+
+        unchecked {
+            for (uint256 i; i < tokenCount; i++) {
+                tokenId = tokenOfOwnerByIndex(_owner, i);
+                ownedNFTsStrings[i] = nftTypeToJson(nftTypes[_tokenTypeIndexes[tokenId]]);
+            }
         }
         return ownedNFTsStrings;
     }
 
-    function getNFTDetails(uint256 tokenId) public view returns (string memory) {
-        require(_tokenExists[tokenId], "NFT does not exist.");
-        NFTType memory nftType = nftTypes[_tokenTypeIndexes[tokenId]];
-        return nftTypeToJson(nftType);
+    function getNFTDetails(uint256 tokenId) external view returns (string memory) {
+        if (!_tokenExists[tokenId]) revert("NFT does not exist.");
+        return nftTypeToJson(nftTypes[_tokenTypeIndexes[tokenId]]);
     }
 
     // Helper function to convert an NFTType to a JSON string
-    function nftTypeToJson(NFTType memory nftType) private pure returns (string memory) {
+    // for 1 ok but for a loop... bad idea
+    function nftTypeToJson(NFTType memory nftType) internal pure returns (string memory) {
         return string(abi.encodePacked(
-            '{"name":"', nftType.name,
+            '{',
+            '"name":"', nftType.name,
             '", "maxSupply":"', uint256(nftType.maxSupply).toString(),
             '", "remainingSupply":"', uint256(nftType.remainingSupply).toString(),
             '", "price":"', uint256(nftType.price).toString(),
