@@ -24,6 +24,8 @@ contract NFTMint is ERC721Enumerable, Ownable, ReentrancyGuard {
     mapping(uint256 => uint256) private _tokenTypeIndexes;
     mapping(uint256 => bool) private _tokenExists;
     mapping(string => bool) private _typeExists;
+    // owner -> typeId
+    mapping(address => uint256[]) private _typesByOwner;
 
     IERC20 immutable public paymentToken;
     address immutable public paymentReceiver;
@@ -31,7 +33,6 @@ contract NFTMint is ERC721Enumerable, Ownable, ReentrancyGuard {
     uint256 public totalMaxSupply;
     uint256 public totalNFTTypes; 
     uint256 public totalRemainingSupply;
-
     uint256 internal currentTokenId;
 
     event NFTTypeAdded(string name, uint256 maxSupply, uint256 price, string uri);
@@ -112,10 +113,11 @@ contract NFTMint is ERC721Enumerable, Ownable, ReentrancyGuard {
 
         if (nftTypes[typeId].remainingSupply == 0) revert("Max supply reached for this NFT type");
 
-        paymentToken.safeTransferFrom(msg.sender, paymentReceiver, nftTypes[typeId].price);
+        // paymentToken.safeTransferFrom(msg.sender, paymentReceiver, nftTypes[typeId].price);
 
         _mint(msg.sender, currentTokenId);
 
+        _typesByOwner[msg.sender].push(typeId);
         _tokenTypeIndexes[currentTokenId] = typeId;
         _tokenExists[currentTokenId] = true;
 
@@ -128,31 +130,20 @@ contract NFTMint is ERC721Enumerable, Ownable, ReentrancyGuard {
         }
     }
 
-    // this ouput is a bad idea
-    function getAllNFTTypes() external view returns (string[] memory) {
-        string[] memory nftTypesStrings = new string[](totalNFTTypes);
-
-        unchecked {
-            for (uint256 i; i < totalNFTTypes; i++) {
-                nftTypesStrings[i] = nftTypeToJson(nftTypes[i]);
-            }
-        }
-        return nftTypesStrings;
+    function getNFTTypesByOwner(address _owner) external view returns (uint256[] memory) {
+        return _typesByOwner[_owner];
     }
 
-    // this ouput is a bad idea
-    function getOwnedNFTs(address _owner) external view returns (string[] memory) {
-        uint256 tokenId;
+    function getTokenIDsByOwner(address _owner) external view returns (uint256[] memory) {
         uint256 tokenCount = balanceOf(_owner);
-        string[] memory ownedNFTsStrings = new string[](tokenCount);
+        uint256[] memory ownedNFTs = new uint256[](tokenCount);
 
         unchecked {
             for (uint256 i; i < tokenCount; i++) {
-                tokenId = tokenOfOwnerByIndex(_owner, i);
-                ownedNFTsStrings[i] = nftTypeToJson(nftTypes[_tokenTypeIndexes[tokenId]]);
+                ownedNFTs[i] = tokenOfOwnerByIndex(_owner, i);
             }
         }
-        return ownedNFTsStrings;
+        return ownedNFTs;
     }
 
     function getNFTDetails(uint256 tokenId) external view returns (string memory) {
@@ -161,7 +152,6 @@ contract NFTMint is ERC721Enumerable, Ownable, ReentrancyGuard {
     }
 
     // Helper function to convert an NFTType to a JSON string
-    // for 1 ok but for a loop... bad idea
     function nftTypeToJson(NFTType memory nftType) internal pure returns (string memory) {
         return string(abi.encodePacked(
             '{',
